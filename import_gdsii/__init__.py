@@ -180,8 +180,10 @@ def setup_chip_scene(x_min, y_min, x_max, y_max, collection=None):
 def create_material(name, color):
     """Create a material with given color"""
     mat = bpy.data.materials.get(name)
-    if mat is None:
-        mat = bpy.data.materials.new(name=name)
+    if mat is not None:
+        return mat
+    # Create new material
+    mat = bpy.data.materials.new(name=name)
 
     mat.use_nodes = True
     nodes = mat.node_tree.nodes
@@ -303,7 +305,8 @@ def create_extruded_layer(report, gds_path, z, height, layer, name, color, unit=
     bpy.context.collection.objects.link(obj)
 
     # Apply material
-    mat = create_material(f"Mat_{name}", color)
+    mat_name = color.get("mat_name", f"Mat_{name}")
+    mat = create_material(mat_name, color)
     if obj.data.materials:
         obj.data.materials[0] = mat
     else:
@@ -680,6 +683,10 @@ class ImportGDSII(bpy.types.Operator, ImportHelper):
                     continue
 
                 layer_cfg = color_file.get('layers', {}).get(layer_name, {})
+                if isinstance(layer_cfg, str):
+                    mat_name = layer_cfg
+                    layer_cfg = color_file.get('materials', {}).get(layer_cfg, {})
+                    layer_cfg["mat_name"] = mat_name
                 obj = create_extruded_layer(
                     self.report,
                     gds_path,
