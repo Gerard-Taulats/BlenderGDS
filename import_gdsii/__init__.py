@@ -194,12 +194,18 @@ def create_material(name, color):
     node_output = nodes.new(type='ShaderNodeOutputMaterial')
 
     # Set color and properties
-    node_bsdf.inputs['Base Color'].default_value = color.get('color', [1.0, 1.0, 1.0, 1.0])
-    node_bsdf.inputs['Metallic'].default_value = color.get('metallic', 0.1)
-    node_bsdf.inputs['Roughness'].default_value = color.get('roughness', 0.5)
-
-    if 'Alpha' in node_bsdf.inputs:
-        node_bsdf.inputs['Alpha'].default_value = color.get('color', [1.0, 1.0, 1.0, 1.0])[-1]
+    for key,value in color.items():
+        # Try using Blender's input names
+        if key in node_bsdf.inputs:
+            node_bsdf.inputs[key].default_value = value
+        elif key == "Subsurface Type":
+            # Handle exceptional property
+            try:
+                node_bsdf.subsurface_method = value
+            except:
+                print(f"Unknown Subsurface Type: {value}")
+        else:
+            print(f"Unknown input name: {key}")
 
     # Link nodes
     mat.node_tree.links.new(node_bsdf.outputs['BSDF'], node_output.inputs['Surface'])
