@@ -30,6 +30,30 @@ import yaml
 # ============================================================================
 
 # PDK Configuration paths
+def load_pdf_configs(configs_dir="configs"):
+    pdks = {}
+
+    yaml_files = [
+        f for f in os.listdir(configs_dir)
+        if f.endswith('.yaml') and os.path.isfile(os.path.join(configs_dir, f))
+    ]
+
+    for yaml_file in yaml_files:
+        file_name = yaml_file[:-5]
+        key = file_name.upper().replace('-', '_')
+
+        config_path = os.path.join(configs_dir, yaml_file)
+        with open(config_path) as f:
+            config = yaml.safe_load(f)["pdk_config"]
+
+        pdks[key] = {
+            'config_path': config_path,
+            'color_path': os.path.join(configs_dir, 'colors', file_name, ''),
+            **config,  # name, order, default, and whatever else is in the YAML
+        }
+
+    return pdks
+
 PDK_CONFIGS = {
     'IHP_SG13G2': {
         'name': 'IHP Open PDK (SG13G2)',

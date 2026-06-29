@@ -2,6 +2,11 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+file_config:
+  name: IHP Open PDK SG13G2
+  description: IHP SG13G2 130nm BiCMOS process
+  order: 1
+
 Activ:
   index: 1
   type: 0
