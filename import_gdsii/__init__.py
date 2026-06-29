@@ -313,6 +313,156 @@ def create_extruded_layer(report, gds_path, z, height, layer, name, color, unit=
     report({'INFO'}, f"✓ {name}: {polygon_count} polygons, {len(all_verts)} vertices")
     return obj
 
+def reconstruct_layer_klayout(report, gds_path, z, height, layer, name, color,
+                      unit=1e-6, crop_box=None, offset=None):
+
+    layout = db.Layout()
+    layout.read(str(gds_path))
+    top_cell = layout.top_cell()
+    dbu = layout.dbu
+
+    # -----------------------------
+    # LOAD REGION
+    # -----------------------------
+    poly_group = db.Region()
+    layer_index = layout.layer(layer[0], layer[1])
+
+    insert = poly_group.insert
+    for shape in top_cell.each_shape(layer_index):
+        if shape.is_polygon():
+            insert(shape.polygon)
+        elif shape.is_simple_polygon():
+            insert(db.Polygon(shape.simple_polygon))
+        elif shape.is_box():
+            insert(shape.box)
+        elif shape.is_path():
+            insert(shape.path.polygon())
+
+    # -----------------------------
+    # CROP BEFORE MERGE
+    # -----------------------------
+    if crop_box is not None:
+        x_min, y_min, x_max, y_max = crop_box
+        crop_region = db.Region(db.Box(
+            int(x_min / dbu),
+            int(y_min / dbu),
+            int(x_max / dbu),
+            int(y_max / dbu)
+        ))
+        poly_group &= crop_region
+
+    poly_group.merge()
+    polygon_count = poly_group.count()
+
+    if poly_group.is_empty():
+        print(f"⚠ Layer {name}: No geometry found")
+        return None
+
+
+    # Holed polygons
+    holed_group = poly_group.with_holes(0, True)
+    str_group = holed_group.delaunay().to_s(-1)[1:-1]
+
+    # Map verts to not have repeated
+    _tr = str.maketrans({')': None, '(': None, ';': ','})
+    coords = np.fromstring(str_group.translate(_tr), sep=",", dtype=np.int64).reshape(-1, 2)
+
+    # Deduplicate vertices
+    unique_verts, inverse = np.unique(coords, axis=0, return_inverse=True)
+
+    # Pre-allocate 3D verts array in one shot
+    verts_3d = np.empty((len(unique_verts), 3), dtype=np.float64)
+    verts_3d[:, :2] = unique_verts * dbu
+    verts_3d[:, 2] = z
+
+    accum_verts = verts_3d.tolist()
+    accum_faces = inverse.reshape(-1, 3).tolist()
+
+
+    # Non-holed polygons
+    no_accum_verts = []
+    no_accum_faces = []
+    non_holed_group = poly_group.with_holes(0, False)
+    str_non_holed = non_holed_group.to_s(-1)[1:-1]
+
+    # Each polygon is "(x,y;x,y;...);(...);..."
+    vert_offset = 0
+    for poly_str in str_non_holed.split(");("):
+        pts = np.fromstring(
+            poly_str.translate(_tr), sep=",", dtype=np.int64
+        ).reshape(-1, 2)
+
+        unique_pts, inverse_pts = np.unique(pts, axis=0, return_inverse=True)
+
+        v3d = np.empty((len(unique_pts), 3), dtype=np.float64)
+        v3d[:, :2] = unique_pts * dbu
+        v3d[:, 2] = z
+
+        no_accum_verts.extend(v3d.tolist())
+        no_accum_faces.append([i + vert_offset for i in inverse_pts.tolist()])
+        vert_offset += len(unique_pts)
+
+
+    # -----------------------------
+    # BUILD MESH
+    # -----------------------------
+    mesh = bpy.data.meshes.new(name)
+    no_mesh = bpy.data.meshes.new(name)
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+
+    n_verts = len(accum_verts)+len(no_accum_verts)
+    mesh.from_pydata(accum_verts, [], accum_faces)
+    no_mesh.from_pydata(no_accum_verts, [], no_accum_faces)
+
+    # -----------------------------
+    # EXTRUDE
+    # -----------------------------
+    import bmesh
+    import math
+
+    bm = bmesh.new()
+    bm.from_mesh(no_mesh)
+
+    # Triangulate
+    bmesh.ops.triangulate(
+        bm,
+        faces=bm.faces[:]
+    )
+    bm.from_mesh(mesh)
+
+    # Tris to quads
+    bmesh.ops.join_triangles(
+        bm,
+        faces=bm.faces,
+        angle_face_threshold=math.pi/4,
+        angle_shape_threshold=math.pi
+    )
+
+    # Extrude upwards
+    ret = bmesh.ops.extrude_face_region(
+        bm,
+        geom=bm.faces
+    )
+
+    extruded_verts = [
+        e for e in ret["geom"]
+        if isinstance(e, bmesh.types.BMVert)
+    ]
+
+    bmesh.ops.translate(
+        bm,
+        verts=extruded_verts,
+        vec=(0, 0, height)
+    )
+
+    bm.to_mesh(mesh)
+    bpy.data.meshes.remove(no_mesh)
+    bm.free()
+
+    print(f"✓ {name}: {polygon_count} polygons, {n_verts} vertices")
+    report({'INFO'}, f"✓ {name}: {polygon_count} polygons, {n_verts} vertices")
+    return obj
 
 # ============================================================================
 # PRE-IMPORT PDK SELECTION DIALOG
@@ -493,10 +643,15 @@ class ImportGDSII(bpy.types.Operator, ImportHelper):
     )
 
     # Merge overlapping shapes per layer
-    merge_layers: BoolProperty(
+    merge_layers: EnumProperty(
         name="Merge Layers",
-        description="Merge overlapping shapes on each layer to avoid Cycles rendering artifacts",
-        default=True,
+        description="Choose a method to import the geometry.",
+        items=[
+            ('No merge', "No merge", "Simply import 1:1 all layers"),
+            ('Raw merge', "Raw merge", "Merge overlapping shapes on each layer to avoid Cycles rendering artifacts"),
+            ('Reconstruct', "Reconstruct", "Performs a delaunay triangulation using KLayout algorithm. Good topology but slower."),
+        ],
+        default='Reconstruct',
     )
 
     # Add metal dummy fill
@@ -665,7 +820,7 @@ class ImportGDSII(bpy.types.Operator, ImportHelper):
             # Merge layers upfront with KLayout if requested
             tmp_dir = None
             gds_path = filepath
-            if self.merge_layers:
+            if not self.merge_layers=='No merge':
                 tmp_dir = tempfile.mkdtemp()
                 gds_path = str(_create_merged_gds(filepath, layerstack, tmp_dir))
                 print(f"Merged GDS written to: {gds_path}")
@@ -680,18 +835,33 @@ class ImportGDSII(bpy.types.Operator, ImportHelper):
                     continue
 
                 layer_cfg = color_file.get('layers', {}).get(layer_name, {})
-                obj = create_extruded_layer(
-                    self.report,
-                    gds_path,
-                    z,
-                    height,
-                    layer_index,
-                    layer_name,
-                    layer_cfg,
-                    unit=self.unit_scale,
-                    crop_box=crop_box,
-                    offset=crop_offset,
-                )
+                obj = None
+                if self.merge_layers=="Raw merge":
+                    obj = create_extruded_layer(
+                        self.report,
+                        gds_path,
+                        z,
+                        height,
+                        layer_index,
+                        layer_name,
+                        layer_cfg,
+                        unit=self.unit_scale,
+                        crop_box=crop_box,
+                        offset=crop_offset,
+                    )
+                elif self.merge_layers=="Reconstruct":
+                    obj = reconstruct_layer_klayout(
+                        self.report,
+                        gds_path,
+                        z,
+                        height,
+                        layer_index,
+                        layer_name,
+                        layer_cfg,
+                        unit=self.unit_scale,
+                        crop_box=crop_box,
+                        offset=crop_offset,
+                    )
 
                 if obj is not None:
                     imported_count += 1
