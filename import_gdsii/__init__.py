@@ -313,12 +313,12 @@ def create_extruded_layer(report, gds_path, z, height, layer, name, color, unit=
     report({'INFO'}, f"✓ {name}: {polygon_count} polygons, {len(all_verts)} vertices")
     return obj
 
-def reconstruct_layer(report, gds_path, z, height, layer, name, color, crop_box=None, offset=None):
+def reconstruct_layer(report, gds_path, z, height, layer, name, color, unit=1e-6, crop_box=None, offset=None):
 
     layout = db.Layout()
     layout.read(str(gds_path))
     top_cell = layout.top_cell()
-    dbu = layout.dbu
+    dbu = layout.dbu*1e-6/unit
 
     # -----------------------------
     # LOAD REGION
@@ -854,6 +854,7 @@ class ImportGDSII(bpy.types.Operator, ImportHelper):
                         layer_index,
                         layer_name,
                         layer_cfg,
+                        unit=self.unit_scale,
                         crop_box=crop_box,
                         offset=crop_offset,
                     )
