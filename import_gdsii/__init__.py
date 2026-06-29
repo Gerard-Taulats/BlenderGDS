@@ -313,8 +313,7 @@ def create_extruded_layer(report, gds_path, z, height, layer, name, color, unit=
     report({'INFO'}, f"✓ {name}: {polygon_count} polygons, {len(all_verts)} vertices")
     return obj
 
-def reconstruct_layer(report, gds_path, z, height, layer, name, color,
-                      unit=1e-6, crop_box=None, offset=None):
+def reconstruct_layer(report, gds_path, z, height, layer, name, color, crop_box=None, offset=None):
 
     layout = db.Layout()
     layout.read(str(gds_path))
@@ -358,7 +357,6 @@ def reconstruct_layer(report, gds_path, z, height, layer, name, color,
         print(f"⚠ Layer {name}: No geometry found")
         return None
 
-
     # Holed polygons
     holed_group = poly_group.with_holes(0, True)
     str_group = holed_group.delaunay().to_s(-1)[1:-1]
@@ -377,7 +375,6 @@ def reconstruct_layer(report, gds_path, z, height, layer, name, color,
 
     accum_verts = verts_3d.tolist()
     accum_faces = inverse.reshape(-1, 3).tolist()
-
 
     # Non-holed polygons
     no_accum_verts = []
@@ -857,7 +854,6 @@ class ImportGDSII(bpy.types.Operator, ImportHelper):
                         layer_index,
                         layer_name,
                         layer_cfg,
-                        unit=self.unit_scale,
                         crop_box=crop_box,
                         offset=crop_offset,
                     )
