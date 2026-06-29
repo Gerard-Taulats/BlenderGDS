@@ -313,7 +313,7 @@ def create_extruded_layer(report, gds_path, z, height, layer, name, color, unit=
     report({'INFO'}, f"✓ {name}: {polygon_count} polygons, {len(all_verts)} vertices")
     return obj
 
-def reconstruct_layer_klayout(report, gds_path, z, height, layer, name, color,
+def reconstruct_layer(report, gds_path, z, height, layer, name, color,
                       unit=1e-6, crop_box=None, offset=None):
 
     layout = db.Layout()
@@ -393,6 +393,8 @@ def reconstruct_layer_klayout(report, gds_path, z, height, layer, name, color,
         ).reshape(-1, 2)
 
         unique_pts, inverse_pts = np.unique(pts, axis=0, return_inverse=True)
+        if offset is not None:
+            unique_pts -= np.array(offset)
 
         v3d = np.empty((len(unique_pts), 3), dtype=np.float64)
         v3d[:, :2] = unique_pts * dbu
@@ -440,25 +442,22 @@ def reconstruct_layer_klayout(report, gds_path, z, height, layer, name, color,
     )
 
     # Extrude upwards
-    ret = bmesh.ops.extrude_face_region(
-        bm,
-        geom=bm.faces
-    )
-
+    ret = bmesh.ops.extrude_face_region(bm, geom=bm.faces)
     extruded_verts = [
-        e for e in ret["geom"]
-        if isinstance(e, bmesh.types.BMVert)
+        e for e in ret["geom"] if isinstance(e, bmesh.types.BMVert)
     ]
-
-    bmesh.ops.translate(
-        bm,
-        verts=extruded_verts,
-        vec=(0, 0, height)
-    )
+    bmesh.ops.translate(bm, verts=extruded_verts, vec=(0, 0, height))
 
     bm.to_mesh(mesh)
     bpy.data.meshes.remove(no_mesh)
     bm.free()
+    
+    # Apply material
+    mat = create_material(f"Mat_{name}", color)
+    if obj.data.materials:
+        obj.data.materials[0] = mat
+    else:
+        obj.data.materials.append(mat)
 
     print(f"✓ {name}: {polygon_count} polygons, {n_verts} vertices")
     report({'INFO'}, f"✓ {name}: {polygon_count} polygons, {n_verts} vertices")
@@ -850,7 +849,7 @@ class ImportGDSII(bpy.types.Operator, ImportHelper):
                         offset=crop_offset,
                     )
                 elif self.merge_layers=="Reconstruct":
-                    obj = reconstruct_layer_klayout(
+                    obj = reconstruct_layer(
                         self.report,
                         gds_path,
                         z,
