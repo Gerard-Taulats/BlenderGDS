@@ -7,7 +7,7 @@
 # Stack assumes a 220 nm Si device layer on buried oxide, with SiN above the Si
 # in the upper cladding, then TiW heater (M1), tungsten via (VC), and Al routing (M2).
 
-file_config:
+pdk_config:
   name: SiEPIC EBeam PDK
   description: SiEPIC EBeam silicon photonics PDK (220 nm SOI)
   order: 5
